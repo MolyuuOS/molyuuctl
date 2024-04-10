@@ -6,7 +6,6 @@ use std::string::String;
 use ini::Ini;
 use toml::{Table, Value};
 
-use crate::config;
 use crate::config::helper::GLOBAL_CONFIG;
 use crate::login::manager::get_current_manager;
 use crate::session::protocol::Protocol;

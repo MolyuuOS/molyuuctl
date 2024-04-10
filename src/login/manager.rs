@@ -1,10 +1,10 @@
 use std::error::Error;
 use std::io::BufWriter;
 use std::path::Path;
+
 use ini::Ini;
 use toml::Value;
 
-use crate::config;
 use crate::config::helper::GLOBAL_CONFIG;
 use crate::session::controller::Session;
 use crate::session::protocol::Protocol;
@@ -17,7 +17,7 @@ static SDDM_CUSTOM_CONFIG_PATH: &'static str = "/etc/sddm.conf.d/molyuuctl.conf"
 
 pub enum SupportedManager {
     LightDM,
-    SDDM
+    SDDM,
 }
 
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub struct ManagerMetadata {
     pub config_path: String,
     pub autologin_section_name: String,
     pub autologin_session_key_name: String,
-    pub autologin_user_key_name: String
+    pub autologin_user_key_name: String,
 }
 
 impl ManagerMetadata {
@@ -38,7 +38,7 @@ impl ManagerMetadata {
                     config_path: LIGHTDM_CUSTOM_CONFIG_PATH.to_string(),
                     autologin_section_name: "Seat:*".to_string(),
                     autologin_session_key_name: "autologin-session".to_string(),
-                    autologin_user_key_name: "autologin-user".to_string()
+                    autologin_user_key_name: "autologin-user".to_string(),
                 }
             }
             SupportedManager::SDDM => {
@@ -47,7 +47,7 @@ impl ManagerMetadata {
                     config_path: SDDM_CUSTOM_CONFIG_PATH.to_string(),
                     autologin_section_name: "Autologin".to_string(),
                     autologin_session_key_name: "Session".to_string(),
-                    autologin_user_key_name: "User".to_string()
+                    autologin_user_key_name: "User".to_string(),
                 }
             }
         }
@@ -92,7 +92,7 @@ impl ManagerBuilder {
         self
     }
 
-    pub fn user_key(mut self, user_key: &str) ->  Self {
+    pub fn user_key(mut self, user_key: &str) -> Self {
         self.0.autologin_user_key_name = user_key.to_string();
         self
     }
@@ -106,7 +106,7 @@ pub struct Manager {
     autologin: bool,
     session_type: Protocol,
     login_user: Option<String>,
-    metadata: ManagerMetadata
+    metadata: ManagerMetadata,
 }
 
 impl Manager {
@@ -142,7 +142,7 @@ impl Manager {
                     } else {
                         None
                     },
-                    metadata: metadata.clone()
+                    metadata: metadata.clone(),
                 });
             }
         }
@@ -158,7 +158,7 @@ impl Manager {
                 }
             },
             login_user: None,
-            metadata: metadata.clone()
+            metadata: metadata.clone(),
         })
     }
 
@@ -287,7 +287,7 @@ pub fn set_manager(new_manager: &str) -> Result<(), Box<dyn Error>> {
             }
         }
     } else {
-        let mut manager = ManagerBuilder::new().use_manager(match new_manager {
+        let manager = ManagerBuilder::new().use_manager(match new_manager {
             "lightdm" => SupportedManager::LightDM,
             "sddm" => SupportedManager::SDDM,
             _ => {

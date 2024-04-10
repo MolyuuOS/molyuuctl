@@ -1,8 +1,9 @@
 use std::error::Error;
+
 use crossbeam::atomic::AtomicCell;
 
 pub struct Cell<T> {
-    inner: AtomicCell<Option<T>>
+    inner: AtomicCell<Option<T>>,
 }
 
 impl<T> Default for Cell<T> {

@@ -2,7 +2,7 @@ use std::string::String;
 
 use clap::{arg, Command};
 
-use crate::login::manager::{get_current_manager, Manager};
+use crate::login::manager::get_current_manager;
 use crate::session::controller::Session;
 use crate::session::protocol::Protocol;
 use crate::tools::cleanup::cleanup;
