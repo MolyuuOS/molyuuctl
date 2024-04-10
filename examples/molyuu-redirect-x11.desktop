@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=XSession
+Exec=/usr/bin/molyuuctl session start
+TryExec=/usr/bin/molyuuctl
+DesktopNames=MolyuuRedirect
+Name=Molyuu Redirect on X11
+Comment=MolyuuCtl will redirect you to your specific session

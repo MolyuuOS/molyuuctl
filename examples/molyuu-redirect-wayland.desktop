@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Molyuu Redirect on Wayland
+Comment=MolyuuCtl will redirect you to your specific session
+Exec=/usr/bin/molyuuctl session start
+TryExec=/usr/bin/molyuuctl
+Type=Application
+DesktopNames=MolyuuRedirect

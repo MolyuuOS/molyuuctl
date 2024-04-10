@@ -1,0 +1,20 @@
+[login]
+manager = "sddm"
+
+[login.autologin]
+enable = true
+user = "molyuu"
+
+[session]
+default = "steam"
+oneshot_session = "desktop"
+oneshot_started = false
+
+[session.desktop]
+protocol = "wayland"
+session = "plasma"
+
+[session.steam]
+protocol = "wayland"
+session = "gamescope-session-steam"
+
