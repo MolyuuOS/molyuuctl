@@ -5,7 +5,7 @@ use std::path::Path;
 use ini::Ini;
 use toml::Value;
 
-use crate::config::helper::GLOBAL_CONFIG;
+use crate::config::GLOBAL_CONFIG;
 use crate::session::controller::Session;
 use crate::session::protocol::Protocol;
 use crate::tools::{privilege, SYSTEMCTL};
@@ -110,51 +110,73 @@ pub struct Manager {
 }
 
 impl Manager {
+    /// Constructs a new instance of a Manager based on the provided metadata.
+    ///
+    /// This function initializes a Manager instance with the given metadata. It checks if the
+    /// configuration file specified in the metadata exists. If it does, it loads the configuration
+    /// file and checks for an autologin section. If an autologin section is found, it extracts the
+    /// autologin session and user information. Otherwise, it initializes the Manager instance
+    /// with default values.
+    ///
+    /// # Parameters
+    ///
+    /// * `metadata`: A `ManagerMetadata` struct containing metadata information needed for
+    ///   constructing the Manager instance.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing either the constructed Manager instance or an error
+    /// message wrapped in a `Box<dyn Error>`. If the Manager is successfully constructed, it
+    /// returns `Ok(Manager)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there are issues encountered during the process of constructing the
+    /// Manager, such as failure to load the configuration file, invalid configuration
+    /// parameters, or errors encountered while retrieving session information.
     pub fn new(metadata: ManagerMetadata) -> Result<Self, Box<dyn Error>> {
+        // Check if the configuration file exists
         if Path::new(metadata.config_path.as_str()).exists() {
+            // Load the configuration file
             let config = Ini::load_from_file(metadata.config_path.clone())?;
-            let autologin_section = config.section(Some(metadata.autologin_section_name.clone()));
-            if autologin_section.is_some() {
-                let autologin_session = autologin_section.unwrap().get(metadata.autologin_session_key_name.clone());
-                let autologin_user = autologin_section.unwrap().get(metadata.autologin_user_key_name.clone());
+            // Check for the autologin section in the configuration
+            if let Some(autologin_section) = config.section(Some(metadata.autologin_section_name.clone())) {
+                let autologin_session = autologin_section.get(metadata.autologin_session_key_name.clone());
+                let autologin_user = autologin_section.get(metadata.autologin_user_key_name.clone());
+                // Initialize the Manager instance with autologin information if available
                 return Ok(Self {
-                    autologin: if autologin_session.is_some() {
-                        // Session must be set to molyuu-redirect
-                        if (autologin_session.unwrap() == format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-wayland").as_str()) ||
-                            (autologin_session.unwrap() == format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-x11").as_str()) {
-                            true
-                        } else {
-                            false
-                        }
+                    autologin: if let Some(autologin_session) = autologin_session {
+                        // Determine if autologin is enabled based on the session
+                        autologin_session == &format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-wayland") ||
+                            autologin_session == &format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-x11")
                     } else {
                         false
                     },
                     session_type: {
                         let oneshot_session = Session::get_oneshot_session()?;
-                        if oneshot_session.is_some() {
-                            oneshot_session.unwrap().get_protocol()
+                        // Determine the session type based on the availability of one-shot session
+                        if let Some(oneshot_session) = oneshot_session {
+                            oneshot_session.get_protocol()
                         } else {
                             Session::get_default_session()?.get_protocol()
                         }
                     },
-                    login_user: if autologin_user.is_some() {
-                        Some(String::from(autologin_user.unwrap()))
-                    } else {
-                        None
-                    },
+                    login_user: autologin_user.map(|user| String::from(user)),
                     metadata: metadata.clone(),
                 });
             }
         }
 
+        // Initialize the Manager instance with default values
         Ok(Self {
             autologin: false,
             session_type: {
                 let oneshot_session = Session::get_oneshot_session()?;
-                if oneshot_session.is_some() {
-                    oneshot_session.unwrap().get_protocol()
+                // Determine the session protocol
+                if let Some(oneshot_session) = oneshot_session {
+                    oneshot_session.get_protocol()
                 } else {
-                    Session::get_default_session().unwrap().get_protocol()
+                    Session::get_default_session()?.get_protocol()
                 }
             },
             login_user: None,
@@ -193,7 +215,26 @@ impl Manager {
         Ok(())
     }
 
+    /// Save the configuration
+    ///
+    /// This function updates or creates the configuration file with the current settings. It manages
+    /// the configuration for autologin and login user, ensuring that the autologin session and user
+    /// are correctly set based on the current state. After updating the configuration file, it also
+    /// updates the program global configuration accordingly.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` indicating the success or failure of saving the configuration. If the
+    /// configuration is successfully saved, it returns `Ok(())`. If an error occurs during the
+    /// process, it returns an error message wrapped in a `Box<dyn Error>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there are issues encountered during the process of saving the
+    /// configuration, such as failure to load or create the configuration file, inability to write
+    /// to the file, or errors encountered while updating global configuration.
     pub fn save_config(&self) -> Result<(), Box<dyn Error>> {
+        // Load existing configuration or create a new one
         let mut config = if Path::new(self.metadata.config_path.as_str()).exists() {
             Ini::load_from_file(self.metadata.config_path.as_str())?
         } else {
@@ -203,6 +244,7 @@ impl Manager {
             Ini::new()
         };
 
+        // Configure autologin session based on the current state
         let mut autologin_section = config.with_section(Some(self.metadata.autologin_section_name.as_str()));
         if self.autologin {
             match self.session_type {
@@ -217,19 +259,24 @@ impl Manager {
             autologin_section.delete(&self.metadata.autologin_session_key_name.as_str());
         }
 
-        if self.login_user.is_some() {
+        // Set login user if provided
+        if let Some(login_user) = &self.login_user {
             let mut autologin_section = config.with_section(Some(self.metadata.autologin_section_name.as_str()));
-            autologin_section.set(self.metadata.autologin_user_key_name.as_str(), self.login_user.clone().unwrap().as_str());
+            autologin_section.set(self.metadata.autologin_user_key_name.as_str(), login_user.as_str());
         }
 
+        // Write configuration to a buffer and then to the file
         let mut buffer = BufWriter::new(Vec::new());
         config.write_to(&mut buffer)?;
         privilege::write(String::from_utf8_lossy(&*buffer.into_inner()?).as_ref(), self.metadata.config_path.as_str())?;
-        self.update_molyuu_config()?;
+
+        // Update program global configuration
+        self.update_global_config()?;
+
         Ok(())
     }
 
-    pub fn update_molyuu_config(&self) -> Result<(), Box<dyn Error>> {
+    pub fn update_global_config(&self) -> Result<(), Box<dyn Error>> {
         let login_info = GLOBAL_CONFIG.get_mut().unwrap().get("login").as_table_mut().unwrap();
         let autologin_info = login_info.get_mut("autologin").unwrap().as_table_mut().unwrap();
         autologin_info["enable"] = Value::Boolean(self.autologin);

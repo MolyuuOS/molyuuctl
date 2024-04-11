@@ -101,7 +101,7 @@ fn main() {
     }
 
     let matches = cli().get_matches();
-    config::helper::Configuration::init(None);
+    config::Configuration::init(None);
 
     match matches.subcommand() {
         Some(("session", sub_m)) => {

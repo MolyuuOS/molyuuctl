@@ -1,4 +1,4 @@
-use crate::config::helper::GLOBAL_CONFIG;
+use crate::config::GLOBAL_CONFIG;
 use crate::login::manager::get_current_manager;
 
 pub extern "C" fn cleanup(sig: libc::c_int) {
