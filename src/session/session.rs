@@ -4,9 +4,12 @@ use std::process::{Command, Stdio};
 use std::string::String;
 
 use ini::Ini;
+use log::warn;
 use toml::{Table, Value};
-use crate::config::GLOBAL_CONFIG;
 
+use crate::common::macros::toml_macros;
+use crate::config::GLOBAL_CONFIG;
+use crate::errors::session::SessionInstanceError;
 use crate::login::manager::get_current_manager;
 use crate::session::protocol::Protocol;
 
@@ -25,20 +28,20 @@ impl Session {
         let detected_protocol = match protocol {
             Some(Protocol::X11) => {
                 if !Path::new(format!("{SYSTEM_XSESSIONS_PATH}/{reg_name}.desktop").as_str()).exists() {
-                    return Err(Box::from("Specific session not found!"));
+                    return Err(Box::from(SessionInstanceError::SessionNotFoundInSystem));
                 }
                 Protocol::X11
             }
             Some(Protocol::Wayland) => {
                 if !Path::new(format!("{SYSTEM_WAYLAND_SESSIONS_PATH}/{reg_name}.desktop").as_str()).exists() {
-                    return Err(Box::from("Specific session not found!"));
+                    return Err(Box::from(SessionInstanceError::SessionNotFoundInSystem));
                 }
                 Protocol::Wayland
             }
             _ => {
                 let detected_protocol = Self::find_session_in_system(real_name.as_str());
                 if detected_protocol.is_err() {
-                    return Err(Box::from("Specific session not found!"));
+                    return Err(Box::from(SessionInstanceError::SessionNotFoundInSystem));
                 }
                 detected_protocol?
             }
@@ -72,12 +75,16 @@ impl Session {
     pub fn from_config(session_name: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let session_info = GLOBAL_CONFIG.get_mut().unwrap().get("session").as_table_mut().unwrap();
         let session_reg_name = if session_name.is_none() {
-            String::from(session_info["default"].as_str().unwrap())
+            let default_session = session_info.get("default");
+            if default_session.is_none() {
+                return Err(Box::from(SessionInstanceError::DefaultSessionNotSet));
+            }
+            String::from(default_session.unwrap().as_str().unwrap())
         } else {
             String::from(session_name.unwrap())
         };
         if session_info.get(session_reg_name.as_str()).is_none() {
-            return Err(Box::from("Session Not Found"));
+            return Err(Box::from(SessionInstanceError::SessionNotFoundInConfig));
         }
 
         let mut session_real_name = String::new();
@@ -87,18 +94,18 @@ impl Session {
             if session.0 == session_reg_name.as_str() {
                 session_real_name = String::from(session.1["session"].as_str().unwrap());
                 let try_get_protocol = session.1.get("protocol");
-                let try_get_logoutcmd = session.1.get("logoutcmd");
+                let try_get_logout_command = session.1.get("logout_command");
                 if try_get_protocol.is_none() {
                     session_protocol = Some(Self::find_session_in_system(session_real_name.as_str())?)
                 } else {
                     session_protocol = match try_get_protocol.unwrap().as_str() {
                         Some("x11") => Some(Protocol::X11),
                         Some("wayland") => Some(Protocol::Wayland),
-                        _ => return Err(Box::from("Unknown protocol"))
+                        _ => return Err(Box::from(SessionInstanceError::UnknownProtocol))
                     }
                 }
-                if try_get_logoutcmd.is_some() {
-                    session_logout_command = Some(String::from(try_get_logoutcmd.unwrap().as_str().unwrap()));
+                if try_get_logout_command.is_some() {
+                    session_logout_command = Some(String::from(try_get_logout_command.unwrap().as_str().unwrap()));
                 }
                 break;
             }
@@ -133,7 +140,7 @@ impl Session {
         } else if Path::new(format!("{SYSTEM_WAYLAND_SESSIONS_PATH}/{real_session_name}.desktop").as_str()).exists() {
             Protocol::Wayland
         } else {
-            return Err(Box::from("Session Not Found"));
+            return Err(Box::from(SessionInstanceError::SessionNotFoundInSystem));
         };
 
         Ok(protocol)
@@ -159,7 +166,7 @@ impl Session {
         } else if self.protocol == Protocol::Wayland {
             SYSTEM_WAYLAND_SESSIONS_PATH
         } else {
-            return Err(Box::from("Unknown protocol"));
+            return Err(Box::from(SessionInstanceError::UnknownProtocol));
         };
 
         // Load the session desktop file
@@ -249,7 +256,7 @@ impl Session {
     pub fn logout(&self) -> Result<(), Box<dyn Error>> {
         // Check if a logout command is set
         if self.logout_command.is_none() {
-            return Err(Box::from("No logout command is set, cannot logout"));
+            return Err(Box::from(SessionInstanceError::LogoutCommandNotSet));
         }
 
         // Execute the logout command
@@ -291,7 +298,7 @@ impl Session {
 
         // Check if a session with the new name already exists
         if session_info.get(new_name).is_some() {
-            return Err(Box::from("Specific session already exists"));
+            return Err(Box::from(SessionInstanceError::SessionExists));
         }
 
         // Store the current name of the session
@@ -306,8 +313,10 @@ impl Session {
         self.reg_name = String::from(new_name);
 
         // Update default session if necessary
-        if session_info.get("default").unwrap().as_str() == Some(old_name.as_str()) {
-            session_info["default"] = Value::String(self.reg_name.clone());
+        if let Some(default_session) = session_info.get("default") {
+            if default_session.as_str() == Some(old_name.as_str()) {
+                session_info["default"] = Value::String(self.reg_name.clone());
+            }
         }
 
         // Save the updated configuration
@@ -338,7 +347,10 @@ impl Session {
     pub fn remove(&self) -> Result<(), Box<dyn Error>> {
         let session_info = GLOBAL_CONFIG.get_mut().unwrap().get("session").as_table_mut().unwrap();
         if session_info.get("default").unwrap().as_str() == Some(self.reg_name.as_str()) {
-            return Err(Box::from("Cannot remove default session"));
+            warn!("You are removing default session, you need to set a default session to make molyuu-redirect session working.");
+            warn!("Auto Login is forced disabled");
+            session_info.remove("default");
+            get_current_manager()?.set_auto_login(false)?;
         }
         session_info.remove(&self.reg_name);
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
@@ -368,7 +380,7 @@ impl Session {
     pub fn register(&mut self) -> Result<(), Box<dyn Error>> {
         let session_info = GLOBAL_CONFIG.get_mut().unwrap().get("session").as_table_mut().unwrap();
         if session_info.get(self.reg_name.as_str()).is_some() {
-            return Err(Box::from("Session already registered or name is occupied"));
+            return Err(Box::from(SessionInstanceError::SessionExists));
         }
 
         let protocol_str = if self.protocol == Protocol::X11 {
@@ -383,7 +395,7 @@ impl Session {
         new_table.insert(String::from("session"), Value::String(self.real_name.clone()));
         new_table.insert(String::from("protocol"), Value::String(String::from(protocol_str)));
         if let Some(logout_command) = &self.logout_command {
-            new_table.insert(String::from("logoutcmd"), Value::String(logout_command.clone()));
+            new_table.insert(String::from("logout_command"), Value::String(logout_command.clone()));
         }
         session_info.insert(String::from(&self.reg_name), Value::Table(new_table));
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
@@ -410,7 +422,7 @@ impl Session {
     pub fn set_logout_command(&mut self, command: &str) -> Result<(), Box<dyn Error>> {
         let session_info = GLOBAL_CONFIG.get_mut().unwrap().get("session").as_table_mut().unwrap();
         let current_session_section = session_info.get_mut(self.reg_name.as_str()).unwrap().as_table_mut().unwrap();
-        current_session_section.insert(String::from("logoutcmd"), toml::Value::String(String::from(command)));
+        toml_macros::change_or_insert!(current_session_section, "logout_command", Value::String(String::from(command)));
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
         Ok(())
     }
@@ -430,7 +442,7 @@ impl Session {
     /// while saving the configuration.
     pub fn set_as_default(&self) -> Result<(), Box<dyn Error>> {
         let session_info = GLOBAL_CONFIG.get_mut().unwrap().get("session").as_table_mut().unwrap();
-        session_info["default"] = toml::Value::String(self.reg_name.clone());
+        toml_macros::change_or_insert!(session_info, "default", Value::String(self.reg_name.clone()));
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
         Ok(())
     }
@@ -451,17 +463,8 @@ impl Session {
     /// configuration for session changes.
     pub fn set_start_oneshot(&self) -> Result<(), Box<dyn Error>> {
         let session_info = GLOBAL_CONFIG.get_mut().unwrap().get("session").as_table_mut().unwrap();
-        if session_info.get("oneshot_session").is_none() {
-            session_info.insert(String::from("oneshot_session"), Value::String(self.reg_name.clone()));
-        } else {
-            session_info["oneshot_session"] = Value::String(self.reg_name.clone());
-        }
-
-        if session_info.get("oneshot_started").is_none() {
-            session_info.insert(String::from("oneshot_started"), Value::Boolean(false));
-        } else {
-            session_info["oneshot_started"] = Value::Boolean(false);
-        }
+        toml_macros::change_or_insert!(session_info, "oneshot_session", Value::String(self.reg_name.clone()));
+        toml_macros::change_or_insert!(session_info, "oneshot_started", Value::Boolean(false));
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
 
         // Update Login Manager config to reflect the session change

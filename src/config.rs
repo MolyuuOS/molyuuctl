@@ -4,8 +4,8 @@ use std::str::FromStr;
 use lazy_static::lazy_static;
 use toml::Value;
 
-use crate::tools::cell::Cell;
-use crate::tools::privilege;
+use crate::common::structs::cell::Cell;
+use crate::system::privilege;
 
 static DEFAULT_CONFIG_PATH: &'static str = "/etc/molyuuctl/config.toml";
 

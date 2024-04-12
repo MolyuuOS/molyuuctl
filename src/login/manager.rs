@@ -3,12 +3,16 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use ini::Ini;
+use log::info;
 use toml::Value;
 
+use crate::common::macros::toml_macros;
 use crate::config::GLOBAL_CONFIG;
-use crate::session::controller::Session;
-use crate::session::protocol::Protocol;
-use crate::tools::{privilege, SYSTEMCTL};
+use crate::errors::login::LoginManagerInstanceError;
+use crate::errors::session::SessionInstanceError;
+use crate::session::Protocol;
+use crate::session::Session;
+use crate::system::{privilege, SYSTEMCTL};
 
 pub static MOLYUU_REDIRECT_SESSION_PREFIX: &'static str = "molyuu-redirect";
 static LIGHTDM_CUSTOM_CONFIG_PATH: &'static str = "/etc/lightdm/lightdm.conf.d/10-molyuud-session.conf";
@@ -56,6 +60,7 @@ impl ManagerMetadata {
 
 pub struct ManagerBuilder(ManagerMetadata);
 
+#[allow(dead_code)]
 impl ManagerBuilder {
     pub fn new() -> Self {
         Self(ManagerMetadata {
@@ -104,7 +109,7 @@ impl ManagerBuilder {
 
 pub struct Manager {
     autologin: bool,
-    session_type: Protocol,
+    session_type: Option<Protocol>,
     login_user: Option<String>,
     metadata: ManagerMetadata,
 }
@@ -120,7 +125,7 @@ impl Manager {
     ///
     /// # Parameters
     ///
-    /// * `metadata`: A `ManagerMetadata` struct containing metadata information needed for
+    /// * `metadata`: A `ManagerMetadata` structs containing metadata information needed for
     ///   constructing the Manager instance.
     ///
     /// # Returns
@@ -135,14 +140,35 @@ impl Manager {
     /// Manager, such as failure to load the configuration file, invalid configuration
     /// parameters, or errors encountered while retrieving session information.
     pub fn new(metadata: ManagerMetadata) -> Result<Self, Box<dyn Error>> {
+        // Determine the session protocol
+        let session_type = {
+            let oneshot_session = Session::get_oneshot_session()?;
+            if let Some(oneshot_session) = oneshot_session {
+                Some(oneshot_session.get_protocol())
+            } else {
+                let default_session = Session::get_default_session();
+                if let Ok(default_session_inner) = default_session {
+                    Some(default_session_inner.get_protocol())
+                } else {
+                    let err = default_session.err().unwrap();
+                    let err_inner = err.downcast_ref::<SessionInstanceError>();
+                    if err_inner.is_some() && *err_inner.unwrap() == SessionInstanceError::DefaultSessionNotSet {
+                        None
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        };
+
         // Check if the configuration file exists
-        if Path::new(metadata.config_path.as_str()).exists() {
+        if Path::new(&metadata.config_path).exists() {
             // Load the configuration file
-            let config = Ini::load_from_file(metadata.config_path.clone())?;
+            let config = Ini::load_from_file(&metadata.config_path)?;
             // Check for the autologin section in the configuration
-            if let Some(autologin_section) = config.section(Some(metadata.autologin_section_name.clone())) {
-                let autologin_session = autologin_section.get(metadata.autologin_session_key_name.clone());
-                let autologin_user = autologin_section.get(metadata.autologin_user_key_name.clone());
+            if let Some(autologin_section) = config.section(Some(&metadata.autologin_section_name)) {
+                let autologin_session = autologin_section.get(&metadata.autologin_session_key_name);
+                let autologin_user = autologin_section.get(&metadata.autologin_user_key_name);
                 // Initialize the Manager instance with autologin information if available
                 return Ok(Self {
                     autologin: if let Some(autologin_session) = autologin_session {
@@ -152,39 +178,27 @@ impl Manager {
                     } else {
                         false
                     },
-                    session_type: {
-                        let oneshot_session = Session::get_oneshot_session()?;
-                        // Determine the session type based on the availability of one-shot session
-                        if let Some(oneshot_session) = oneshot_session {
-                            oneshot_session.get_protocol()
-                        } else {
-                            Session::get_default_session()?.get_protocol()
-                        }
-                    },
+                    session_type,
                     login_user: autologin_user.map(|user| String::from(user)),
                     metadata: metadata.clone(),
                 });
             }
         }
 
+        info!("HERE3");
         // Initialize the Manager instance with default values
         Ok(Self {
             autologin: false,
-            session_type: {
-                let oneshot_session = Session::get_oneshot_session()?;
-                // Determine the session protocol
-                if let Some(oneshot_session) = oneshot_session {
-                    oneshot_session.get_protocol()
-                } else {
-                    Session::get_default_session()?.get_protocol()
-                }
-            },
+            session_type,
             login_user: None,
             metadata: metadata.clone(),
         })
     }
 
     pub fn set_auto_login(&mut self, enabled: bool) -> Result<(), Box<dyn Error>> {
+        if let Err(_err) = Session::get_default_session() {
+            return Err(Box::from(format!("Cannot change Auto Login status, Reason: {}", _err)));
+        }
         self.autologin = enabled;
         self.save_config()?;
         Ok(())
@@ -198,7 +212,7 @@ impl Manager {
 
     pub fn set_as_default_manager(&self) -> Result<(), Box<dyn Error>> {
         let login_info = GLOBAL_CONFIG.get_mut().unwrap().get("login").as_table_mut().unwrap();
-        login_info["manager"] = Value::String(String::from(self.metadata.systemd_unit.as_str()));
+        toml_macros::change_or_insert!(login_info, "manager", Value::String(String::from(self.metadata.systemd_unit.as_str())));
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
         Ok(())
     }
@@ -246,14 +260,15 @@ impl Manager {
 
         // Configure autologin session based on the current state
         let mut autologin_section = config.with_section(Some(self.metadata.autologin_section_name.as_str()));
-        if self.autologin {
+        if self.autologin && self.session_type.is_some() {
             match self.session_type {
-                Protocol::X11 => {
+                Some(Protocol::X11) => {
                     autologin_section.set(self.metadata.autologin_session_key_name.as_str(), format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-x11"));
                 }
-                Protocol::Wayland => {
+                Some(Protocol::Wayland) => {
                     autologin_section.set(self.metadata.autologin_session_key_name.as_str(), format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-wayland"));
                 }
+                None => {}
             }
         } else {
             autologin_section.delete(&self.metadata.autologin_session_key_name.as_str());
@@ -279,9 +294,9 @@ impl Manager {
     pub fn update_global_config(&self) -> Result<(), Box<dyn Error>> {
         let login_info = GLOBAL_CONFIG.get_mut().unwrap().get("login").as_table_mut().unwrap();
         let autologin_info = login_info.get_mut("autologin").unwrap().as_table_mut().unwrap();
-        autologin_info["enable"] = Value::Boolean(self.autologin);
+        toml_macros::change_or_insert!(autologin_info, "enable", Value::Boolean(self.autologin));
         if self.login_user.is_some() {
-            autologin_info["user"] = Value::String(self.login_user.clone().unwrap());
+            toml_macros::change_or_insert!(autologin_info, "user", Value::String(self.login_user.clone().unwrap()));
         }
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
         Ok(())
@@ -303,7 +318,7 @@ pub fn get_current_manager() -> Result<Manager, Box<dyn Error>> {
             _ => {}
         }
     }
-    Err(Box::from("Unsupported manager"))
+    Err(Box::from(LoginManagerInstanceError::UnknownCurrentManager))
 }
 
 pub fn set_manager(new_manager: &str) -> Result<(), Box<dyn Error>> {
@@ -313,7 +328,7 @@ pub fn set_manager(new_manager: &str) -> Result<(), Box<dyn Error>> {
         let manager = String::from(current_manager.unwrap().as_str().unwrap());
 
         if manager == new_manager.to_lowercase() {
-            return Err(Box::from("Specific manager is already current login manager"));
+            return Err(Box::from(LoginManagerInstanceError::ManagerAlreadyDefault));
         }
 
         match new_manager {
@@ -330,7 +345,7 @@ pub fn set_manager(new_manager: &str) -> Result<(), Box<dyn Error>> {
                 manager.set_as_default_manager()?;
             }
             _ => {
-                return Err(Box::from("Unsupportted manager"));
+                return Err(Box::from(LoginManagerInstanceError::UnsupportedManager));
             }
         }
     } else {
@@ -338,7 +353,7 @@ pub fn set_manager(new_manager: &str) -> Result<(), Box<dyn Error>> {
             "lightdm" => SupportedManager::LightDM,
             "sddm" => SupportedManager::SDDM,
             _ => {
-                return Err(Box::from("Unsupportted manager"));
+                return Err(Box::from(LoginManagerInstanceError::UnsupportedManager));
             }
         }).build()?;
         manager.save_config()?;

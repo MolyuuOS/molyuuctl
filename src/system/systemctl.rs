@@ -19,12 +19,12 @@ impl SystemD {
     }
 
     pub fn reset_failed_unit(&self, unit: &str) -> Result<(), Box<dyn Error>> {
-        self.get_proxy()?.method_call("org.freedesktop.systemd1.Manager", "ResetFailedUnit", ("lightdm", ))?;
+        self.get_proxy()?.method_call("org.freedesktop.systemd1.Manager", "ResetFailedUnit", (unit, ))?;
         Ok(())
     }
 
-    pub fn restart_unit(&self, unit: &str) -> Result<(), Box<dyn Error>> {
-        let (job, ): (String, ) = self.get_proxy()?.method_call("org.freedesktop.systemd1.Manager", "RestartUnit", ("lightdm", "replace", ))?;
-        Ok(())
+    pub fn restart_unit(&self, unit: &str) -> Result<String, Box<dyn Error>> {
+        let (job, ): (String, ) = self.get_proxy()?.method_call("org.freedesktop.systemd1.Manager", "RestartUnit", (unit, "replace", ))?;
+        Ok(job)
     }
 }

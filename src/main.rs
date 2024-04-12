@@ -1,16 +1,20 @@
 use std::string::String;
 
 use clap::{arg, Command};
+use log::error;
 
+use crate::common::macros::attempt;
+use crate::config::GLOBAL_CONFIG;
 use crate::login::manager::get_current_manager;
-use crate::session::controller::Session;
-use crate::session::protocol::Protocol;
-use crate::tools::cleanup::cleanup;
+use crate::session::Protocol;
+use crate::session::Session;
 
 mod config;
 mod session;
 mod login;
-mod tools;
+mod errors;
+mod system;
+mod common;
 
 fn cli() -> Command {
     Command::new("MolyuuOS System Controller")
@@ -94,7 +98,20 @@ fn cli() -> Command {
                 .about("Login via set Login Manager now")))
 }
 
+extern "C" fn cleanup(sig: libc::c_int) {
+    println!("Received SIGNAL: {}", sig);
+    println!("Clean up before exit ...");
+
+    // Save all configs
+    GLOBAL_CONFIG.get_mut().unwrap().save_config();
+    get_current_manager().unwrap().save_config().unwrap();
+
+    println!("Done! Goodbye!");
+}
+
 fn main() {
+    common::logger::init().unwrap();
+
     unsafe {
         libc::signal(libc::SIGINT, cleanup as libc::sighandler_t);
         libc::signal(libc::SIGTERM, cleanup as libc::sighandler_t);
@@ -103,91 +120,98 @@ fn main() {
     let matches = cli().get_matches();
     config::Configuration::init(None);
 
-    match matches.subcommand() {
-        Some(("session", sub_m)) => {
-            match sub_m.subcommand() {
-                Some(("register", session_sub_m)) => {
-                    let reg_name = session_sub_m.get_one::<String>("name").expect("required");
-                    let session_name = session_sub_m.get_one::<String>("session").expect("required");
-                    let protocol_str = session_sub_m.get_one::<String>("protocol").expect("required");
-                    let logout_command = session_sub_m.get_one::<String>("logout");
-                    let protocol = {
-                        let protocol_str_lower = protocol_str.to_lowercase();
-                        match protocol_str_lower.as_str() {
-                            "x11" => {
-                                Some(Protocol::X11)
+    let status = attempt! {{
+        match matches.subcommand() {
+            Some(("session", sub_m)) => {
+                match sub_m.subcommand() {
+                    Some(("register", session_sub_m)) => {
+                        let reg_name = session_sub_m.get_one::<String>("name").expect("required");
+                        let session_name = session_sub_m.get_one::<String>("session").expect("required");
+                        let protocol_str = session_sub_m.get_one::<String>("protocol").expect("required");
+                        let logout_command = session_sub_m.get_one::<String>("logout");
+                        let protocol = {
+                            let protocol_str_lower = protocol_str.to_lowercase();
+                            match protocol_str_lower.as_str() {
+                                "x11" => {
+                                    Some(Protocol::X11)
+                                }
+                                "wayland" => {
+                                    Some(Protocol::Wayland)
+                                }
+                                "auto" => None,
+                                _ => panic!("Unknown protocol")
                             }
-                            "wayland" => {
-                                Some(Protocol::Wayland)
-                            }
-                            "auto" => None,
-                            _ => panic!("Unknown protocol")
-                        }
-                    };
-                    Session::new(reg_name.clone(), session_name.clone(), logout_command.cloned(), protocol).unwrap().register().unwrap()
-                }
-                Some(("set-default", session_sub_m)) => {
-                    let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                    Session::from_config(Some(register_name.as_str())).unwrap().set_as_default().unwrap()
-                }
-                Some(("set-oneshot", session_sub_m)) => {
-                    let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                    Session::from_config(Some(register_name.as_str())).unwrap().set_start_oneshot().unwrap();
-                }
-                Some(("set-logout-command", session_sub_m)) => {
-                    let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                    let logout_command = session_sub_m.get_one::<String>("logout_command").expect("required");
-                    Session::from_config(Some(register_name.as_str())).unwrap().set_logout_command(logout_command.as_str()).unwrap()
-                }
-                Some(("rename", session_sub_m)) => {
-                    let original_name = session_sub_m.get_one::<String>("original_name").expect("required");
-                    let new_name = session_sub_m.get_one::<String>("new_name").expect("required");
-                    Session::from_config(Some(original_name.as_str())).unwrap().rename(new_name.as_str()).unwrap()
-                }
-                Some(("remove", session_sub_m)) => {
-                    let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                    Session::from_config(Some(register_name.as_str())).unwrap().remove().unwrap()
-                }
-                Some(("start", session_sub_m)) => {
-                    let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                    if register_name.as_str() == "default" {
-                        Session::start_oneshot_or_default_session().unwrap()
-                    } else {
-                        Session::from_config(Some(register_name.as_str())).unwrap().start().unwrap()
+                        };
+                        Session::new(reg_name.clone(), session_name.clone(), logout_command.cloned(), protocol)?.register()?
                     }
-                }
-                Some(("logout", session_sub_m)) => {
-                    let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                    Session::from_config(Some(register_name.as_str())).unwrap().logout().unwrap()
-                }
-                _ => {}
-            }
-        }
-        Some(("login", sub_m)) => {
-            match sub_m.subcommand() {
-                Some(("set-manager", login_sub_m)) => {
-                    let manager_name = login_sub_m.get_one::<String>("manager_name").expect("required");
-                    login::manager::set_manager(manager_name.to_lowercase().as_str()).unwrap();
-                }
-                Some(("autologin", login_sub_m)) => {
-                    match login_sub_m.subcommand() {
-                        Some(("enable", autologin_enable_sub_m)) => {
-                            let username = autologin_enable_sub_m.get_one::<String>("user");
-                            if username.is_some() {
-                                get_current_manager().unwrap().set_login_user(username.unwrap().as_str()).unwrap();
-                            }
-                            get_current_manager().unwrap().set_auto_login(true).unwrap();
-                        }
-                        Some(("disable", _)) => {
-                            get_current_manager().unwrap().set_auto_login(false).unwrap();
-                        }
-                        _ => {}
+                    Some(("set-default", session_sub_m)) => {
+                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
+                        Session::from_config(Some(register_name.as_str()))?.set_as_default()?
                     }
+                    Some(("set-oneshot", session_sub_m)) => {
+                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
+                        Session::from_config(Some(register_name.as_str()))?.set_start_oneshot()?;
+                    }
+                    Some(("set-logout-command", session_sub_m)) => {
+                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
+                        let logout_command = session_sub_m.get_one::<String>("logout_command").expect("required");
+                        Session::from_config(Some(register_name.as_str()))?.set_logout_command(logout_command.as_str())?
+                    }
+                    Some(("rename", session_sub_m)) => {
+                        let original_name = session_sub_m.get_one::<String>("original_name").expect("required");
+                        let new_name = session_sub_m.get_one::<String>("new_name").expect("required");
+                        Session::from_config(Some(original_name.as_str()))?.rename(new_name.as_str())?
+                    }
+                    Some(("remove", session_sub_m)) => {
+                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
+                        Session::from_config(Some(register_name.as_str()))?.remove()?
+                    }
+                    Some(("start", session_sub_m)) => {
+                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
+                        if register_name.as_str() == "default" {
+                            Session::start_oneshot_or_default_session()?
+                        } else {
+                            Session::from_config(Some(register_name.as_str()))?.start()?
+                        }
+                    }
+                    Some(("logout", session_sub_m)) => {
+                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
+                        Session::from_config(Some(register_name.as_str()))?.logout()?
+                    }
+                    _ => {}
                 }
-                Some(("now", _)) => get_current_manager().unwrap().login_now().unwrap(),
-                _ => {}
             }
+            Some(("login", sub_m)) => {
+                match sub_m.subcommand() {
+                    Some(("set-manager", login_sub_m)) => {
+                        let manager_name = login_sub_m.get_one::<String>("manager_name").expect("required");
+                        login::manager::set_manager(manager_name.to_lowercase().as_str())?;
+                    }
+                    Some(("autologin", login_sub_m)) => {
+                        match login_sub_m.subcommand() {
+                            Some(("enable", autologin_enable_sub_m)) => {
+                                let username = autologin_enable_sub_m.get_one::<String>("user");
+                                if username.is_some() {
+                                    get_current_manager()?.set_login_user(username.unwrap().as_str())?;
+                                }
+                                get_current_manager()?.set_auto_login(true)?;
+                            }
+                            Some(("disable", _)) => {
+                                get_current_manager()?.set_auto_login(false)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(("now", _)) => get_current_manager()?.login_now()?,
+                    _ => {}
+                }
+            }
+            _ => {}
         }
-        _ => {}
+        Ok(())
+    }};
+
+    if let Err(_err) = status {
+        error!("{}", _err);
     }
 }
