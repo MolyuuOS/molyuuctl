@@ -44,6 +44,11 @@ impl Configuration {
     }
 
     pub fn save_config(&mut self) {
-        privilege::write(toml::to_string(self.value.get_mut().unwrap()).unwrap().as_str(), &self.path).unwrap();
+        unsafe {
+            privilege::exec(|| {
+                fs::write(&self.path, toml::to_string(self.value.get_mut().unwrap()).unwrap())?;
+                Ok(())
+            }).unwrap();
+        }
     }
 }

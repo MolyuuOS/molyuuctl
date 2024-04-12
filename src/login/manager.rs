@@ -1,9 +1,8 @@
 use std::error::Error;
-use std::io::BufWriter;
+use std::fs;
 use std::path::Path;
 
 use ini::Ini;
-use log::info;
 use toml::Value;
 
 use crate::common::macros::toml_macros;
@@ -185,7 +184,6 @@ impl Manager {
             }
         }
 
-        info!("HERE3");
         // Initialize the Manager instance with default values
         Ok(Self {
             autologin: false,
@@ -195,17 +193,25 @@ impl Manager {
         })
     }
 
-    pub fn set_auto_login(&mut self, enabled: bool) -> Result<(), Box<dyn Error>> {
+    pub fn set_auto_login(&mut self, enabled: bool, user: Option<&str>) -> Result<(), Box<dyn Error>> {
         if let Err(_err) = Session::get_default_session() {
             return Err(Box::from(format!("Cannot change Auto Login status, Reason: {}", _err)));
         }
-        self.autologin = enabled;
-        self.save_config()?;
-        Ok(())
-    }
 
-    pub fn set_login_user(&mut self, user: &str) -> Result<(), Box<dyn Error>> {
-        self.login_user = Some(String::from(user));
+        match (enabled, user) {
+            (true, Some(login_user)) => {
+                self.login_user = Some(String::from(login_user));
+                self.autologin = enabled;
+            }
+            (false, None) => {
+                self.login_user = None;
+                self.autologin = enabled;
+            }
+            _ => {
+                return Err(Box::from(LoginManagerInstanceError::InvalidParameters));
+            }
+        }
+
         self.save_config()?;
         Ok(())
     }
@@ -253,14 +259,22 @@ impl Manager {
             Ini::load_from_file(self.metadata.config_path.as_str())?
         } else {
             if !Path::new(self.metadata.config_path.as_str()).parent().unwrap().exists() {
-                std::fs::create_dir_all(Path::new(self.metadata.config_path.as_str()).parent().unwrap())?;
+                unsafe {
+                    privilege::exec(|| {
+                        fs::create_dir_all(Path::new(self.metadata.config_path.as_str()).parent().unwrap())?;
+                        Ok(())
+                    })?;
+                }
             }
             Ini::new()
         };
 
         // Configure autologin session based on the current state
-        let mut autologin_section = config.with_section(Some(self.metadata.autologin_section_name.as_str()));
-        if self.autologin && self.session_type.is_some() {
+        let mut autologin_section = &mut config.with_section(Some(self.metadata.autologin_section_name.as_str()));
+        if self.autologin && self.login_user.is_some() && self.session_type.is_some() {
+            // Set login user
+            autologin_section = autologin_section.set(self.metadata.autologin_user_key_name.as_str(), self.login_user.clone().unwrap());
+
             match self.session_type {
                 Some(Protocol::X11) => {
                     autologin_section.set(self.metadata.autologin_session_key_name.as_str(), format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-x11"));
@@ -274,16 +288,13 @@ impl Manager {
             autologin_section.delete(&self.metadata.autologin_session_key_name.as_str());
         }
 
-        // Set login user if provided
-        if let Some(login_user) = &self.login_user {
-            let mut autologin_section = config.with_section(Some(self.metadata.autologin_section_name.as_str()));
-            autologin_section.set(self.metadata.autologin_user_key_name.as_str(), login_user.as_str());
+        // Write configuration to file
+        unsafe {
+            privilege::exec(|| {
+                config.write_to_file(&self.metadata.config_path)?;
+                Ok(())
+            })?;
         }
-
-        // Write configuration to a buffer and then to the file
-        let mut buffer = BufWriter::new(Vec::new());
-        config.write_to(&mut buffer)?;
-        privilege::write(String::from_utf8_lossy(&*buffer.into_inner()?).as_ref(), self.metadata.config_path.as_str())?;
 
         // Update program global configuration
         self.update_global_config()?;

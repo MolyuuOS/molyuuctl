@@ -91,7 +91,9 @@ fn cli() -> Command {
                 .arg_required_else_help(true)
                 .subcommand(Command::new("enable")
                     .about("Enable Auto Login")
-                    .arg(arg!(-u --user <USERNAME> "User that login as")))
+                    .arg_required_else_help(true)
+                    .arg(arg!(-u --user <USERNAME> "User that login as")
+                        .required(true)))
                 .subcommand(Command::new("disable")
                     .about("Disable Auto Login")))
             .subcommand(Command::new("now")
@@ -190,14 +192,11 @@ fn main() {
                     Some(("autologin", login_sub_m)) => {
                         match login_sub_m.subcommand() {
                             Some(("enable", autologin_enable_sub_m)) => {
-                                let username = autologin_enable_sub_m.get_one::<String>("user");
-                                if username.is_some() {
-                                    get_current_manager()?.set_login_user(username.unwrap().as_str())?;
-                                }
-                                get_current_manager()?.set_auto_login(true)?;
+                                let username = autologin_enable_sub_m.get_one::<String>("user").expect("required");
+                                get_current_manager()?.set_auto_login(true, Some(username.as_str()))?;
                             }
                             Some(("disable", _)) => {
-                                get_current_manager()?.set_auto_login(false)?;
+                                get_current_manager()?.set_auto_login(false, None)?;
                             }
                             _ => {}
                         }

@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::string::String;
 
 use ini::Ini;
-use log::warn;
+use log::{info, warn};
 use toml::{Table, Value};
 
 use crate::common::macros::toml_macros;
@@ -176,8 +176,8 @@ impl Session {
         // Extract the necessary information from the desktop file
         let desktop_section = session_file.section(Some("Desktop Entry")).unwrap();
         let command = desktop_section.get("Exec").unwrap();
-        println!("Target Session: {}", desktop_section.get("Name").unwrap());
-        println!("Executing Session Command: {}", command);
+        info!("Target Session: {}", desktop_section.get("Name").unwrap());
+        info!("Executing Session Command: {}", command);
 
         // Execute the session command
         Command::new("/bin/bash")
@@ -216,19 +216,16 @@ impl Session {
         let oneshot_session = session_info.get("oneshot_session");
         let oneshot_started = session_info.get("oneshot_started");
 
-        // Check if a one-shot session is configured and not already started
-        if let (Some(oneshot_session), Some(oneshot_started)) = (oneshot_session, oneshot_started) {
-            if !oneshot_started.as_bool().unwrap() {
-                let session_to_start = String::from(oneshot_session.as_str().unwrap());
+        // Check if a one-shot session is configured and not already started, if so,
+        // start the configured one-shot session, else start the default session.
+        match (oneshot_session, oneshot_started) {
+            (Some(session), Some(started)) if !started.as_bool().unwrap() => {
+                let session_to_start = session.as_str().unwrap().to_string();
                 session_info["oneshot_started"] = Value::Boolean(true);
                 GLOBAL_CONFIG.get_mut().unwrap().save_config();
-
-                // Start the specified one-shot session
-                Self::from_config(Some(session_to_start.as_str()))?.start()?;
+                Self::from_config(Some(session_to_start.as_str()))?.start()?
             }
-        } else {
-            // If no one-shot session is configured or it's already started, start the default session
-            Self::from_config(None)?.start()?;
+            _ => Self::from_config(None)?.start()?,
         }
 
         // Update Login Manager config
@@ -350,7 +347,7 @@ impl Session {
             warn!("You are removing default session, you need to set a default session to make molyuu-redirect session working.");
             warn!("Auto Login is forced disabled");
             session_info.remove("default");
-            get_current_manager()?.set_auto_login(false)?;
+            get_current_manager()?.set_auto_login(false, None)?;
         }
         session_info.remove(&self.reg_name);
         GLOBAL_CONFIG.get_mut().unwrap().save_config();
