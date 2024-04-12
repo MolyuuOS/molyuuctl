@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::Mutex;
 
 use lazy_static::lazy_static;
-use libc::uid_t;
+use libc::{gid_t, uid_t};
 
 lazy_static! {
     static ref ROOT: Mutex<RootPermission> = unsafe { Mutex::new(RootPermission::new()) };
@@ -10,14 +10,18 @@ lazy_static! {
 
 struct RootPermission {
     ruid: uid_t,
+    rgid: gid_t,
     euid: uid_t,
+    egid: gid_t,
 }
 
 impl RootPermission {
     pub unsafe fn new() -> Self {
         Self {
             ruid: libc::getuid(),
+            rgid: libc::getgid(),
             euid: libc::geteuid(),
+            egid: libc::getegid(),
         }
     }
 
@@ -25,8 +29,8 @@ impl RootPermission {
     ///
     /// This function attempts to grant root permissions to the current process. If the process is
     /// already running with root privileges, it does nothing. If the process is not running with root
-    /// privileges, it attempts to escalate its privileges by setting the effective user ID (euid) and
-    /// the saved user ID (suid) to 0.
+    /// privileges, it attempts to escalate its privileges by setting the effective user ID (euid),
+    /// the saved user ID (suid), the effective group ID (egid) and the save group ID (sgid) to 0.
     ///
     /// # Safety
     ///
@@ -51,6 +55,10 @@ impl RootPermission {
             if libc::setresuid(self.ruid, 0, 0) < 0 {
                 return Err(Box::from("Failed to reset uid"));
             }
+
+            if libc::setresgid(self.rgid, 0, 0) < 0 {
+                return Err(Box::from("Failed to reset euid"));
+            }
         }
 
         Ok(())
@@ -58,9 +66,9 @@ impl RootPermission {
 
     /// Returns the process to its original permissions after performing operations with elevated privileges.
     ///
-    /// This function attempts to reset the effective user ID (euid) of the current process to its original
-    /// value. It is typically called after completing operations that required elevated privileges to
-    /// return the process to a more restricted permission level.
+    /// This function attempts to reset the effective user ID (euid) and the effective group ID (egid) of the
+    /// current process to its original value. It is typically called after completing operations that required
+    /// elevated privileges to return the process to a more restricted permission level.
     ///
     /// # Safety
     ///
@@ -83,6 +91,9 @@ impl RootPermission {
             return Err(Box::from("Failed to reset euid"));
         }
 
+        if libc::setegid(self.egid) < 0 {
+            return Err(Box::from("Failed to reset egid"));
+        }
         Ok(())
     }
 }
@@ -91,6 +102,7 @@ impl Drop for RootPermission {
     fn drop(&mut self) {
         unsafe {
             libc::setresuid(self.ruid, self.euid, self.ruid);
+            libc::setresgid(self.rgid, self.egid, self.rgid);
         }
     }
 }
