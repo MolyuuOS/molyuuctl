@@ -13,6 +13,6 @@ toml = "0.8.12"
 log = { version = "0.4.21", features = ["std"] }
 dbus = "0.9.7"
 libc = "0.2.153"
-crossbeam = "0.8.4"
+crossbeam-utils = "0.8.19"
 colored = "2.1.0"
 supports-color = "3.0.0"
