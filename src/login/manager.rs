@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
@@ -17,6 +18,7 @@ pub static MOLYUU_REDIRECT_SESSION_PREFIX: &'static str = "molyuu-redirect";
 static LIGHTDM_CUSTOM_CONFIG_PATH: &'static str = "/etc/lightdm/lightdm.conf.d/10-molyuud-session.conf";
 static SDDM_CUSTOM_CONFIG_PATH: &'static str = "/etc/sddm.conf.d/molyuuctl.conf";
 
+pub type ConfigList = Option<HashMap<String, HashMap<String, (String, String)>>>;
 
 pub enum SupportedManager {
     LightDM,
@@ -30,6 +32,7 @@ pub struct ManagerMetadata {
     pub autologin_section_name: String,
     pub autologin_session_key_name: String,
     pub autologin_user_key_name: String,
+    pub autologin_related_other_configs: ConfigList,
 }
 
 impl ManagerMetadata {
@@ -42,15 +45,25 @@ impl ManagerMetadata {
                     autologin_section_name: "Seat:*".to_string(),
                     autologin_session_key_name: "autologin-session".to_string(),
                     autologin_user_key_name: "autologin-user".to_string(),
+                    autologin_related_other_configs: None,
                 }
             }
             SupportedManager::SDDM => {
+                let mut other_configs = HashMap::new();
+
+                // Section Autologin
+                // Key: ReLogin, Value: false/true (Disable: false, Enable: true)
+                let mut autologin_section = HashMap::new();
+                autologin_section.insert("ReLogin".to_string(), ("false".to_string(), "true".to_string()));
+
+                other_configs.insert("Autologin".to_string(), autologin_section);
                 Self {
                     systemd_unit: "sddm".to_string(),
                     config_path: SDDM_CUSTOM_CONFIG_PATH.to_string(),
                     autologin_section_name: "Autologin".to_string(),
                     autologin_session_key_name: "Session".to_string(),
                     autologin_user_key_name: "User".to_string(),
+                    autologin_related_other_configs: Some(other_configs),
                 }
             }
         }
@@ -68,6 +81,7 @@ impl ManagerBuilder {
             autologin_section_name: "".to_string(),
             autologin_session_key_name: "".to_string(),
             autologin_user_key_name: "".to_string(),
+            autologin_related_other_configs: None,
         })
     }
 
@@ -98,6 +112,56 @@ impl ManagerBuilder {
 
     pub fn user_key(mut self, user_key: &str) -> Self {
         self.0.autologin_user_key_name = user_key.to_string();
+        self
+    }
+
+    /// A method to set other related configurations for autologin.
+    ///
+    /// This method takes ownership of `self` and a `ConfigList`, sets the autologin-related
+    /// other configurations to the provided `config_list`, and returns `Self`.
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - The current instance of the struct.
+    /// * `config_list` - A `ConfigList` representing other related configurations. `ConfigList`
+    ///   is an alias for `Option<HashMap<String, HashMap<String, (String, String)>>>`. It is a
+    ///   nested HashMap structure where the outer HashMap represents sections, and the inner
+    ///   HashMap represents key-value pairs for configurations within each section. The values
+    ///   are tuples of two strings representing the values when autologin is disabled and enabled
+    ///   respectively.
+    ///
+    /// # Returns
+    ///
+    /// The modified instance of the struct with other related configurations set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crate::{ConfigList, YourStruct};
+    /// use std::collections::HashMap;
+    ///
+    /// let mut your_struct = YourStruct::new();
+    ///
+    /// let mut config_list = ConfigList::new();
+    ///
+    /// let mut section1 = HashMap::new();
+    /// section1.insert("ConfigKeyName1".to_string(), ("DisabledValue1".to_string(), "EnabledValue1".to_string()));
+    /// section1.insert("ConfigKeyName2".to_string(), ("DisabledValue2".to_string(), "EnabledValue2".to_string()));
+    /// // Add more key-value pairs as needed...
+    ///
+    /// let mut section2 = HashMap::new();
+    /// section2.insert("ConfigKeyName1".to_string(), ("DisabledValue1".to_string(), "EnabledValue1".to_string()));
+    /// section2.insert("ConfigKeyName2".to_string(), ("DisabledValue2".to_string(), "EnabledValue2".to_string()));
+    /// // Add more key-value pairs as needed...
+    ///
+    /// config_list.insert("SectionName1".to_string(), section1);
+    /// config_list.insert("SectionName2".to_string(), section2);
+    /// // Add more sections as needed...
+    ///
+    /// your_struct = your_struct.other_related_configs(config_list);
+    /// ```
+    pub fn other_related_configs(mut self, config_list: ConfigList) -> Self {
+        self.0.autologin_related_other_configs = config_list;
         self
     }
 
@@ -283,9 +347,29 @@ impl Manager {
                     autologin_section.set(self.metadata.autologin_session_key_name.as_str(), format!("{MOLYUU_REDIRECT_SESSION_PREFIX}-wayland"));
                 }
                 None => {}
+            };
+
+            // Update other related configs
+            if let Some(config_map) = &self.metadata.autologin_related_other_configs {
+                for (section_name, map) in config_map {
+                    let mut section = &mut config.with_section(Some(section_name.as_str()));
+                    for (k, v) in map {
+                        section = section.set(k.as_str(), v.1.clone());
+                    }
+                }
             }
         } else {
             autologin_section.delete(&self.metadata.autologin_session_key_name.as_str());
+
+            // Update other related configs
+            if let Some(config_map) = &self.metadata.autologin_related_other_configs {
+                for (section_name, map) in config_map {
+                    let mut section = &mut config.with_section(Some(section_name.as_str()));
+                    for (k, v) in map {
+                        section = section.set(k.as_str(), v.0.clone());
+                    }
+                }
+            }
         }
 
         // Write configuration to file
