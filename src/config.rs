@@ -1,5 +1,4 @@
 use std::fs;
-use std::str::FromStr;
 
 use lazy_static::lazy_static;
 use toml::Value;
@@ -7,7 +6,9 @@ use toml::Value;
 use crate::common::structs::cell::Cell;
 use crate::system::privilege;
 
-static DEFAULT_CONFIG_PATH: &'static str = "/etc/molyuuctl/config.toml";
+static DEFAULT_CONFIG: &'static str = "config.toml";
+pub static DEFAULT_CONFIG_DIRECTORY: &'static str = "/etc/molyuuctl";
+
 
 lazy_static! {
     pub static ref GLOBAL_CONFIG: Cell<Configuration> = Cell::default();
@@ -21,16 +22,16 @@ pub struct Configuration {
 impl Configuration {
     fn new(config_path: Option<&str>) -> Self {
         let file_path = if config_path.is_some() {
-            config_path.unwrap()
+            config_path.unwrap().to_string()
         } else {
-            DEFAULT_CONFIG_PATH
+            format!("{}/{}", DEFAULT_CONFIG_DIRECTORY, DEFAULT_CONFIG)
         };
 
-        let contents = fs::read_to_string(file_path).unwrap();
+        let contents = fs::read_to_string(file_path.as_str()).unwrap();
         let value = contents.parse::<Value>().unwrap();
 
         Self {
-            path: String::from_str(file_path).unwrap(),
+            path: file_path,
             value: Cell::new(value),
         }
     }

@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::string::String;
@@ -12,9 +13,11 @@ use crate::config::GLOBAL_CONFIG;
 use crate::errors::session::SessionInstanceError;
 use crate::login::manager::get_current_manager;
 use crate::session::protocol::Protocol;
+use crate::system::lock::Lock;
 
 static SYSTEM_XSESSIONS_PATH: &'static str = "/usr/share/xsessions";
 static SYSTEM_WAYLAND_SESSIONS_PATH: &'static str = "/usr/share/wayland-sessions";
+static MOLYUUCTL_SESSION_STARTUP_LOCK: &'static str = "molyuuctl-session-startup-lock";
 
 pub struct Session {
     reg_name: String,
@@ -148,6 +151,9 @@ impl Session {
 
     /// Start the session as specified by the desktop file, executing the appropriate command.
     ///
+    /// This function loads the session desktop file, extracts the necessary information, and executes
+    /// the specified session command using a child process.
+    ///
     /// # Returns
     ///
     /// Returns a `Result` indicating the success or failure of starting the session. If the session
@@ -160,18 +166,16 @@ impl Session {
     /// such as failure to load the session configuration file, inability to retrieve necessary
     /// information from the desktop file, or failure to execute the session command.
     pub fn start(&self) -> Result<(), Box<dyn Error>> {
-        // Determine the location of the session desktop file based on the protocol
-        let session_file_location = if self.protocol == Protocol::X11 {
-            SYSTEM_XSESSIONS_PATH
-        } else if self.protocol == Protocol::Wayland {
-            SYSTEM_WAYLAND_SESSIONS_PATH
-        } else {
-            return Err(Box::from(SessionInstanceError::UnknownProtocol));
-        };
+        // Create Lock
+        let mut molyuuctl_lock = Lock::new(MOLYUUCTL_SESSION_STARTUP_LOCK, Some(self.reg_name.clone()));
+        molyuuctl_lock.lock()?;
 
         // Load the session desktop file
-        let session_real_name = self.real_name.as_str();
-        let session_file = Ini::load_from_file(format!("{session_file_location}/{session_real_name}.desktop"))?;
+        let session_file = Ini::load_from_file(format!(
+            "{}/{}.desktop",
+            if self.protocol == Protocol::X11 { SYSTEM_XSESSIONS_PATH } else { SYSTEM_WAYLAND_SESSIONS_PATH },
+            self.real_name
+        ))?;
 
         // Extract the necessary information from the desktop file
         let desktop_section = session_file.section(Some("Desktop Entry")).unwrap();
@@ -188,6 +192,10 @@ impl Session {
             .output()
             .expect("Failed to launch session");
 
+        // Unlock and detroy the lock.
+        // If fails to unlock, this is an unexpected exception 
+        // that cannot be handled, and panic should occur at this point.
+        drop(molyuuctl_lock);
         Ok(())
     }
 
@@ -223,6 +231,7 @@ impl Session {
                 let session_to_start = session.as_str().unwrap().to_string();
                 session_info["oneshot_started"] = Value::Boolean(true);
                 GLOBAL_CONFIG.get_mut().unwrap().save_config();
+
                 Self::from_config(Some(session_to_start.as_str()))?.start()?
             }
             _ => Self::from_config(None)?.start()?,
@@ -518,5 +527,29 @@ impl Session {
             }
         }
         Ok(None)
+    }
+
+    /// Retrieve the currently running session if it exists.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing either an optional running session configuration
+    /// (`Option<Self>`) or an error message wrapped in a `Box<dyn Error>`. If a running
+    /// session exists, it returns `Ok(Some(Self))`. If there is no running session, it
+    /// returns `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there are issues encountered during the process of retrieving the
+    /// running session configuration, such as failure to read the lock file.
+    pub fn get_running_session() -> Result<Option<Self>, Box<dyn Error>> {
+        let molyuuctl_lock = Lock::new(MOLYUUCTL_SESSION_STARTUP_LOCK, None);
+        if molyuuctl_lock.is_locked()? {
+            // Read running session name
+            let session_name = fs::read_to_string(format!("/tmp/{MOLYUUCTL_SESSION_STARTUP_LOCK}.lock"))?;
+            Ok(Some(Self::from_config(Some(session_name.as_str()))?))
+        } else {
+            Ok(None)
+        }
     }
 }

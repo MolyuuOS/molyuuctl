@@ -1,3 +1,6 @@
+extern crate core;
+
+use std::process::exit;
 use std::string::String;
 
 use clap::{arg, Command};
@@ -66,10 +69,8 @@ fn cli() -> Command {
                     .default_value("default")
                     .default_missing_value("default")))
             .subcommand(Command::new("logout")
-                .about("Logout specific session")
-                .arg_required_else_help(true)
-                .arg(arg!([register_name] "Session register name")
-                    .required(true)))
+                .about("Logout specific session (Logout oneshot session if no session specific")
+                .arg(arg!([register_name] "Session register name")))
             .subcommand(Command::new("set-oneshot")
                 .about("Set a session to start oneshot while login with set login manager next time")
                 .arg_required_else_help(true)
@@ -109,6 +110,7 @@ extern "C" fn cleanup(sig: libc::c_int) {
     get_current_manager().unwrap().save_config().unwrap();
 
     println!("Done! Goodbye!");
+    exit(0);
 }
 
 fn main() {
@@ -177,8 +179,14 @@ fn main() {
                         }
                     }
                     Some(("logout", session_sub_m)) => {
-                        let register_name = session_sub_m.get_one::<String>("register_name").expect("required");
-                        Session::from_config(Some(register_name.as_str()))?.logout()?
+                        let register_name = session_sub_m.get_one::<String>("register_name");
+                        if let Some(name) = register_name {
+                            Session::from_config(Some(name.as_str()))?.logout()?
+                        } else if let Some(session) = Session::get_running_session()? {
+                                session.logout()?
+                        } else {
+                            return Err(Box::from("No session is specific and running session!"));
+                        }
                     }
                     _ => {}
                 }

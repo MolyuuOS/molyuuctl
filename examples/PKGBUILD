@@ -1,0 +1,36 @@
+# Maintainer: bigsaltyfishes <bigsaltyfishes@gmail.com>
+
+pkgname=molyuuctl
+pkgver=1.0.0
+pkgrel=1
+branch="main"
+pkgdesc="Molyuu Controller is used to manage and register available sessions in the system. It supports X.org and Wayland environments. All sessions are accessed through registered aliases. This project is used to replace the complex session selection script in SteamOS and facilitate users to change the desktop environment by themselves."
+arch=('x86_64')
+url="https://github.com/MolyuuOS/molyuuctl"
+license=('MIT')
+depends=('dbus' 'systemd' 'gcc-libs' 'bash')
+optdepends=('sddm: Display manager (required if using sddm)'
+            'lightdm: Display manager (required if using lightdm)')
+makedepends=('rust')
+source=("https://github.com/MolyuuOS/molyuuctl/archive/refs/heads/$branch.zip")
+sha256sums=('SKIP')  # You need to replace this with the actual checksum
+
+build() {
+    cd "$srcdir/molyuuctl-$branch"
+    cargo build --release --locked
+}
+
+package() {
+    cd "$srcdir/molyuuctl-$branch"
+    install -Dm755 "target/release/molyuuctl" "$pkgdir/usr/bin/molyuuctl"
+
+    # Setting capabilities
+    setcap cap_setuid,cap_setgid+ep "$pkgdir/usr/bin/molyuuctl"
+
+    # Copying files from examples directory
+    install -Dm644 "examples/config.toml" "$pkgdir/etc/molyuuctl/config.toml"
+    install -Dm644 "examples/molyuu-redirect-wayland.desktop" "$pkgdir/usr/share/wayland-sessions/molyuu-redirect-wayland.desktop"
+    install -Dm644 "examples/molyuu-redirect-x11.desktop" "$pkgdir/usr/share/xsessions/molyuu-redirect-x11.desktop"
+}
+
+# vim:set ts=2 sw=2 et:
