@@ -52,9 +52,9 @@ impl ManagerMetadata {
                 let mut other_configs = HashMap::new();
 
                 // Section Autologin
-                // Key: ReLogin, Value: false/true (Disable: false, Enable: true)
+                // Key: Relogin, Value: false/true (Disable: false, Enable: true)
                 let mut autologin_section = HashMap::new();
-                autologin_section.insert("ReLogin".to_string(), ("false".to_string(), "true".to_string()));
+                autologin_section.insert("Relogin".to_string(), ("false".to_string(), "true".to_string()));
 
                 other_configs.insert("Autologin".to_string(), autologin_section);
                 Self {
