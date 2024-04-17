@@ -289,8 +289,8 @@ impl Manager {
 
     pub fn login_now(&self) -> Result<(), Box<dyn Error>> {
         self.save_config()?;
-        SYSTEMCTL.lock().unwrap().reset_failed_unit(self.metadata.systemd_unit.as_str())?;
-        SYSTEMCTL.lock().unwrap().restart_unit(self.metadata.systemd_unit.as_str())?;
+        SYSTEMCTL.lock().unwrap().reset_failed_unit(format!("{}.service", self.metadata.systemd_unit).as_str())?;
+        SYSTEMCTL.lock().unwrap().restart_unit(format!("{}.service", self.metadata.systemd_unit).as_str())?;
         Ok(())
     }
 

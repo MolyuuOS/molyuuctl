@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::time::Duration;
 
-use dbus::blocking::{Connection, Proxy};
+use dbus::{blocking::{Connection, Proxy}, Path};
 
 pub struct SystemD {
     conn: Connection,
@@ -24,7 +24,7 @@ impl SystemD {
     }
 
     pub fn restart_unit(&self, unit: &str) -> Result<String, Box<dyn Error>> {
-        let (job, ): (String, ) = self.get_proxy()?.method_call("org.freedesktop.systemd1.Manager", "RestartUnit", (unit, "replace", ))?;
-        Ok(job)
+        let (job, ): (Path, ) = self.get_proxy()?.method_call("org.freedesktop.systemd1.Manager", "RestartUnit", (unit, "replace", ))?;
+        Ok(job.to_string())
     }
 }
