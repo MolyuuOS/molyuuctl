@@ -7,7 +7,6 @@ use clap::{arg, Command};
 use log::error;
 
 use crate::common::macros::attempt;
-use crate::config::GLOBAL_CONFIG;
 use crate::login::manager::get_current_manager;
 use crate::session::Protocol;
 use crate::session::Session;
@@ -104,10 +103,6 @@ fn cli() -> Command {
 extern "C" fn cleanup(sig: libc::c_int) {
     println!("Received SIGNAL: {}", sig);
     println!("Clean up before exit ...");
-
-    // Save all configs
-    GLOBAL_CONFIG.get_mut().unwrap().save_config();
-    get_current_manager().unwrap().save_config().unwrap();
 
     println!("Done! Goodbye!");
     exit(0);

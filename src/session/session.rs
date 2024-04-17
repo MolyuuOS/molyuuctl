@@ -231,14 +231,12 @@ impl Session {
                 let session_to_start = session.as_str().unwrap().to_string();
                 session_info["oneshot_started"] = Value::Boolean(true);
                 GLOBAL_CONFIG.get_mut().unwrap().save_config();
+                get_current_manager()?.save_config()?;
 
                 Self::from_config(Some(session_to_start.as_str()))?.start()?
             }
             _ => Self::from_config(None)?.start()?,
         }
-
-        // Update Login Manager config
-        get_current_manager()?.save_config()?;
         Ok(())
     }
 
